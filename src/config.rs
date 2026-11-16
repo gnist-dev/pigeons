@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
+use iroh::EndpointId;
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs::{self, File},
@@ -14,6 +15,8 @@ use tokio::{
 pub struct Config {
     /// Whether to send metrics to iroh-services. `None` means we have not asked.
     pub telemetry_enabled: Option<bool>,
+    pub use_allowlist: Option<bool>,
+    pub allow_list: Option<Vec<String>>,
 }
 
 impl Config {
@@ -29,6 +32,8 @@ impl Config {
 
         Ok(Self {
             telemetry_enabled: user.telemetry_enabled.or(system.telemetry_enabled),
+            use_allowlist: user.use_allowlist.or(system.use_allowlist),
+            allow_list: user.allow_list.or(system.allow_list),
         })
     }
 
@@ -281,6 +286,8 @@ mod tests {
         for enabled in [true, false] {
             let config = Config {
                 telemetry_enabled: Some(enabled),
+                use_allowlist: None,
+                allow_list: None,
             };
             config.store_to(&path).await.unwrap();
 

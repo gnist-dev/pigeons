@@ -6,8 +6,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use iroh::{
-    Endpoint, EndpointId, RelayMap, RelayUrl, SecretKey,
-    endpoint::{RelayMode, presets},
+    Endpoint, EndpointId, PublicKey, RelayMap, RelayUrl, SecretKey,
+    endpoint::{self, AfterHandshakeOutcome, Connection, EndpointHooks, RelayMode, presets},
     protocol::Router,
 };
 use iroh_services::ApiSecret;
@@ -38,6 +38,33 @@ pub struct RoostConfig {
 impl Default for RoostConfig {
     fn default() -> Self {
         Self { ssh_port: 22 }
+    }
+}
+
+#[derive(Debug)]
+struct AllowListHook {
+    pub allow_list: Vec<EndpointId>,
+}
+
+impl EndpointHooks for AllowListHook {
+    async fn after_handshake<'a>(
+        &'a self,
+        conn: &'a Connection,
+    ) -> endpoint::AfterHandshakeOutcome {
+        if self.allow_list.contains(&conn.remote_id()) {
+            #[cfg(debug_assertions)]
+            println!("connection accepted from {}", conn.remote_id());
+
+            AfterHandshakeOutcome::Accept
+        } else {
+            #[cfg(debug_assertions)]
+            println!("connection rejected from {}", conn.remote_id());
+
+            AfterHandshakeOutcome::Reject {
+                error_code: 403u32.into(),
+                reason: b"not found on the allow_list".into(),
+            }
+        }
     }
 }
 
@@ -86,9 +113,24 @@ impl TunnelBuilder {
             self.relay_urls.iter().cloned().collect()
         };
 
-        let builder = Endpoint::builder(presets::N0)
-            .secret_key(self.secret_key.clone())
-            .relay_mode(RelayMode::Custom(relay_map));
+        let mut allow_list: Vec<PublicKey> = Vec::new();
+
+        for key in self.config.allow_list.unwrap_or(vec![]) {
+            allow_list.push(PublicKey::from_z32(key.as_str())?);
+        }
+
+        // if the use_allowlist is None then we keep to the default
+        // pidgeon behaviour of leaving it up to sshd to deal with
+        // auth
+        let builder = match self.config.use_allowlist.unwrap_or(false) {
+            true => Endpoint::builder(presets::N0)
+                .hooks(AllowListHook { allow_list })
+                .secret_key(self.secret_key.clone())
+                .relay_mode(RelayMode::Custom(relay_map)),
+            false => Endpoint::builder(presets::N0)
+                .secret_key(self.secret_key.clone())
+                .relay_mode(RelayMode::Custom(relay_map)),
+        };
 
         let endpoint = builder.bind().await?;
         tracing::info!("endpoint bound, id={}", endpoint.id());

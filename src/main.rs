@@ -113,6 +113,12 @@ pub struct FlyArgs {
     #[arg(long, default_value_t = false)]
     pub stdio: bool,
 
+    /// Use a persistent identity instead of throwaway keys for connecting
+    /// to the roost. This is neccessary for roosts (hosts) that use
+    /// an allow_list
+    #[arg(short, long, default_value_t = false)]
+    pub persistent: bool,
+
     #[arg(long, value_name = "URL", help = RELAY_URL_HELP, action = ArgAction::Append)]
     pub relay_url: Vec<String>,
 }
@@ -308,7 +314,13 @@ async fn main() -> anyhow::Result<()> {
                 .await
         }
         Cmd::Fly(args) => {
-            let mut builder = Tunnel::builder_ephemeral().await?;
+            let ssh_dir = home_ssh_dir()?;
+
+            let mut builder = match args.persistent {
+                false => Tunnel::builder_ephemeral().await?,
+                true => Tunnel::builder_from_ssh_dir(ssh_dir).await?,
+            };
+
             for url in &args.relay_url {
                 builder.relay_urls.push(
                     RelayUrl::from_str(url)
@@ -523,6 +535,7 @@ mod tests {
     fn telemetry_question_skips_ssh_proxy_command() {
         let stdio = Cmd::Fly(FlyArgs {
             public_key: "abc".to_string(),
+            persistent: false,
             stdio: true,
             relay_url: vec![],
         });
